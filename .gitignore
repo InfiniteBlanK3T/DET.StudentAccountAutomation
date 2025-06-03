@@ -1,0 +1,5 @@
+Logs/
+Data/
+*.csv
+*.json
+!config.json.template

@@ -1,0 +1,37 @@
+{
+  // IMPORTANT: This need to be changed according to your school and environment.
+  "SchoolSettings": {
+    "SchoolNumber": "0000", // Replace 0000 with your 4-digit school number (e.g., "8881")
+    "SchoolName": "Your School Name" // Replace with your school's full name (e.g., "Sample Primary School")
+  },
+  "FileNames": {
+    "MasterStudentData": "MasterStudentData.csv", // Name of your primary student data file - without it it would START FRESH
+  },
+  // ONLY NEED TO CHANGE TO YOUR EMAIL
+  "EmailNotification": {
+    "Enabled": true, // true to enable email notifications, false to disable
+    "To": "recipient1@example.com;recipient2@example.com", // Semicolon-separated list of email addresses for summary reports
+    "From": "automation_noreply@example.com", // "From" address for emails sent by the script
+    "SubjectPrefix": "Daily Student Update Report", // Prefix for email subject lines
+    "SmtpServer": "smtp.yourschool.vic.edu.au", // Your SMTP server address (e.g., "smtp.education.vic.gov.au") - default setting does not need to be changed unless you have a different SMTP server
+    "Port": 25, // SMTP port (usually 25, or 587/465 for SSL/TLS)
+    "SendOnSuccessOnly": true, // true to send summary email only if script completes successfully; false to send on success or failure
+    "AdminNotifyOnError": true, // true to send an immediate email to AdminEmailOnError if a critical script error occurs
+    "AdminEmailOnError": "admin1@example.com;admin2@example.com", // Semicolon-separated list for critical error notifications
+    "BodyAsHtml": false // true if the email body should be HTML, false for plain text
+  },
+  "Logging": {
+    "LogLevel": "Information" // Controls console output verbosity. Options: "Verbose", "Information", "Warning", "Error", "Debug". Log file always gets all levels.
+  },
+  "ScriptBehavior": {
+    "MockMode": true, // true to simulate eduPass operations (no live changes); false for production runs. START WITH TRUE!
+    "TestEmail": "test_user@example.com", // Email address(es) to send ALL emails to when MockMode is true (semicolon-separated)
+    "RemoveQuotesFromCsv": true // true to remove all double quotes from generated CSV files; false to keep them (standard CSV format)
+  },
+  "CleanupSettings": {
+    "Enabled": true, // true to enable automated cleanup of old log and archive files, false to disable
+    "RunOnDayOfWeek": "Monday", // Day of the week to run cleanup. Options: "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
+    "RetentionDaysLogs": 7, // Number of days to keep log files before deleting
+    "RetentionDaysArchives": 7 // Number of days to keep archived data files before deleting
+  }
+}
