@@ -154,7 +154,7 @@ $MasterStudentDataFile = Join-Path -Path $DataDir -ChildPath $Global:Config.File
 
 $DailyDownloadDir = Join-Path -Path $DataDir -ChildPath "DailyDownloads"
 $ArchivedMasterDataDir = Join-Path -Path $DataDir -ChildPath "ArchivedCurrentData"
-$StudentsByYearLevelDir = Join-Path -Path $DataDir -ChildPath "StudentsByYearLevel"
+$StudentsByYearLevelDir = Join-Path -Path $ProjectRoot -ChildPath "StudentsByYearLevel"
 
 $TodayFileNameFormat = Get-Date -Format "ddMMyyyy" 
 $ArchivedMasterStudentDataFile = Join-Path -Path $ArchivedMasterDataDir -ChildPath "ArchivedMasterStudentData_$(($Global:Config.FileNames.MasterStudentData) -replace '\.csv', '')_$TodayFileNameFormat.csv"
