@@ -39,7 +39,7 @@
 #>
 
 #region Global Settings and Path Definitions
-$ScriptVersion = "1.4"
+$ScriptVersion = "1.5"
 $ScriptStartTime = Get-Date
 $ErrorActionPreference = "Stop" 
 $VerbosePreference = "Continue"
@@ -55,6 +55,18 @@ if (-not (Test-Path -Path $ConfigPath -PathType Leaf)) {
     Write-Error "Configuration file 'config.json' not found at $ConfigPath. Script cannot continue."
     Exit 1
 }
+
+$MiscHelperPath = Join-Path -Path $ScriptsDir -ChildPath "MiscHelper.psm1"
+if (-not (Test-Path -Path $MiscHelperPath -PathType Leaf)) {
+    Write-Error "Utility module 'MiscHelper.psm1' not found at $MiscHelperPath. Script cannot continue."
+    Exit 1
+}
+$EduSTARHelperPath = Join-Path -Path $ScriptsDir -ChildPath "EduSTARHelper.psm1"
+if (-not (Test-Path -Path $EduSTARHelperPath -PathType Leaf)) {
+    Write-Error "Utility module 'EduSTARHelper.psm1' not found at $EduSTARHelperPath. Script cannot continue."
+    Exit 1
+}
+
 try {
     $Global:Config = Get-Content -Path $ConfigPath | ConvertFrom-Json
     if ($Global:Config.Logging.LogLevel -notin "Verbose", "Debug") {
@@ -68,9 +80,6 @@ catch {
     Exit 1
 }
 
-# --- Utility Module Path (in Scripts folder) ---
-$UtilsModulePath = Join-Path -Path $ScriptsDir -ChildPath "StudentDataUtils.psm1"
-
 # --- Logging Setup (Logs folder inside Scripts folder) ---
 $LogDir = Join-Path -Path $ScriptsDir -ChildPath "Logs" 
 $LogFileDateSuffix = Get-Date -Format "yyyyMMdd"
@@ -83,7 +92,7 @@ if (-not (Test-Path -Path $LogDir -PathType Container)) {
 # --- Global Processing Summary ---
 $Global:ProcessingSummary = [System.Text.StringBuilder]::new()
 
-Function Write-Log {
+Function Global:Write-Log {
     param(
         [Parameter(Mandatory=$true)]
         [string]$Message,
@@ -118,6 +127,28 @@ Write-Log -Message "Data Directory: $DataDir" -Level Verbose
 Write-Log -Message "Configuration loaded from: $ConfigPath" -Level Verbose
 Write-Log -Message "Log file for this session: $LogFilePath" -Level Information
 
+# Import utility functions
+try {
+    Write-Host "Importing utility module from: $MiscHelperPath"
+    Import-Module -Name $MiscHelperPath -Force 
+
+    Write-Host "Importing eduSTAR helper module from: $EduSTARHelperPath"
+    Import-Module -Name $EduSTARHelperPath -Force
+}
+catch {
+    Write-Error "Failed to import module. Ensure the file exists and is accessible. $($_.Exception.Message)"
+    Exit 1 
+}
+
+try {
+    Write-Log -Message "Importing ImportExcel module..." -Level Verbose
+    Import-Module ImportExcel -ErrorAction Stop
+    Write-Log -Message "Successfully imported ImportExcel module." -Level Information
+} catch {
+    Write-Log -Message "Failed to import the 'ImportExcel' module. This module is required for creating .xlsx files. Please install it by running 'Install-Module ImportExcel -Scope CurrentUser' in PowerShell. Error: $($_.Exception.Message)" -Level Error
+    $Global:ProcessingSummary.AppendLine("   CRITICAL ERROR: ImportExcel module not found. Year level Excel files cannot be generated.") | Out-Null
+}
+
 # --- Data File and Directory Paths (relative to DataDir) ---
 $MasterStudentDataFile = Join-Path -Path $DataDir -ChildPath $Global:Config.FileNames.MasterStudentData
 
@@ -142,16 +173,6 @@ Write-Log -Message "Ensuring data directories exist under $DataDir..." -Level Ve
     }
 }
 
-# Import utility functions
-try {
-    Write-Log -Message "Importing utility module from: $UtilsModulePath" -Level Verbose
-    Import-Module -Name $UtilsModulePath -Force 
-    Write-Log -Message "Successfully imported module: $UtilsModulePath" -Level Information
-}
-catch {
-    Write-Log -Message "Failed to import module [$UtilsModulePath]. Ensure the file exists and is accessible. $($_.Exception.Message)" -Level Error
-    Exit 1 
-}
 #endregion Global Settings and Path Definitions
 
 #region Helper Functions (Content mostly unchanged from V1.2, ensure they use global paths correctly)
@@ -232,6 +253,13 @@ Function Compare-StudentChanges {
     $DepartedStudents = @() # Ensure it's okay for this to be empty
     $ExistingStudents = @()
 
+    $DownloadedStudentHas = @{}
+    foreach ($ds in $DownloadedStudents) {
+        if (-not [string]::IsNullOrWhiteSpace($ds.Username)) {
+            $DownloadedStudentHas[$ds.Username] = $ds
+        }
+    }
+
     if ($MasterStudents.Count -eq 0) {
         Write-Log -Message "Master student list is empty (or initial run). All downloaded students treated as new." -Level Information
         $NewStudentsInput = if ($null -ne $DownloadedStudents) { $DownloadedStudents } else { @() }
@@ -254,51 +282,93 @@ Function Compare-StudentChanges {
     $Global:ProcessingSummary.AppendLine("   Retained Existing Students: $($ExistingStudents.Count)") | Out-Null
     
     # Process existing students with empty passwords
-    $Global:ProcessingSummary.AppendLine("4.1 Processing students...") | Out-Null
+    $Global:ProcessingSummary.AppendLine("4.1 Processing students changes (YearLevel, Class, Password)..") | Out-Null
+    $UpdatedExistingStudents = @()
     $StudentsWithNewlyGeneratedPasswords = [System.Text.StringBuilder]::new()
     $EmptyPasswordCount = 0
 
     Write-Log -Message "Checking existing students for empty passwords..." -Level Verbose
 
-    foreach ($student in $ExistingStudents) {
-        if ([string]::IsNullOrWhiteSpace($student.Password)) {
+    if($ExistingStudents.Count -eq 0) {
+        Write-Log -Message "No existing students to process." -Level Information
+
+        if (-not (Get-Command Get-RandomPasswordSimple -ErrorAction SilentlyContinue)) {
+            Write-Log -Message "Utility function 'Get-RandomPasswordSimple' not found." -Level Error
+            throw "Missing critical utility function: Get-RandomPasswordSimple"
+        }
+
+        foreach ($masterStudent in $ExistingStudents) {
+            $usernameForLog = if ($masterStudent.Username) { $masterStudent.Username } else { "Unknown" }
+            $downloadedStudentData =  $DownloadedStudentHas[$masterStudent.Username]
+
+            if ($null -eq $downloadedStudentData) {
+                Write-Log -Message "WARNING: Existing student '$usernameForLog' not found in downloaded data. Skipping." -Level Warning
+                $UpdatedExistingStudents += $masterStudent # Add to list as is, anomoly
+                continue
+            }
+
+            # Check and update YearLevel
+            if ($masterSTudent.YearLevel -ne $downloadedStudentData.YearLevel) {
+                # Debug
+                Write-Log -Message "Updating YearLevel for existing student '$usernameForLog' from '$($masterStudent.YearLevel)' to '$($downloadedStudentData.YearLevel)'" -Level Information
+                $masterStudent.YearLevel = $downloadedStudentData.YearLevel
+            }
+
+            # Check and update Class
+            if ($masterStudent.Class -ne $downloadedStudentData.Class) {
+                #Debug
+                Write-Log -Message "Updating Class for existing student '$usernameForLog' from '$($masterStudent.Class)' to '$($downloadedStudentData.Class)'" -Level Information
+                $masterStudent.Class = $downloadedStudentData.Class
+            }
             
-            # Generate a new password
-            $newPassword = Get-RandomPasswordSimple
-            # Add/update Password property to the student object
-            $student.Password = $newPassword
-            $EmptyPasswordCount++
+            #Check and update Email
+            $expectedEmail = "$($downloadedStudentData.Username)@schools.vic.edu.au"
+            if ($masterStudent.Email -ne $expectedEmail) {
+                #Debug
+                Write-Log -Message "Updating Email for existing student '$usernameForLog' from '$($masterStudent.Email)' to '$expectedEmail'" -Level Information
+                $masterStudent.Email = $expectedEmail
+            }
+
+            # Check and update Password if blank in master data
+            if ([string]::IsNullOrWhiteSpace($student.Password)) {
             
-            $StudentsWithNewlyGeneratedPasswords.AppendLine("   - $($student.FirstName) $($student.LastName) ($($student.Username)), Year: $($student.YearLevel), Class: $($student.Class) - Password Generated.") | Out-Null
-            
-            # If not in MockMode, actually set the password in eduPass
-            if ($Global:Config.ScriptBehavior.MockMode -ne $true) {
-                if (Get-Command Set-eduPassStudentAccountPassword -ErrorAction SilentlyContinue) {
-                    try {
-                        Set-eduPassStudentAccountPassword -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -Password $newPassword | Out-Null
-                        Write-Log -Message "  SUCCESS: eduPass password set for $($student.Username)." -Level Information
-                    } catch {
-                        Write-Log -Message "  ERROR setting eduPass password for $($($student.Username)): $($_.Exception.Message)" -Level Error
+                # Generate a new password
+                $newPassword = Get-RandomPasswordSimple
+                # Add/update Password property to the student object
+                $student.Password = $newPassword
+                $EmptyPasswordCount++
+                
+                $StudentsWithNewlyGeneratedPasswords.AppendLine("   - $($student.FirstName) $($student.LastName) ($($student.Username)), Year: $($student.YearLevel), Class: $($student.Class) - Password Generated.") | Out-Null
+  
+                # If not in MockMode, actually set the password in eduPass
+                if ($Global:Config.ScriptBehavior.MockMode -ne $true) {
+                    if (Get-Command Set-eduPassStudentAccountPassword -ErrorAction SilentlyContinue) {
+                        try {
+                            Set-eduPassStudentAccountPassword -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -Password $newPassword | Out-Null
+                            Write-Log -Message "  SUCCESS: eduPass password set for $($student.Username)." -Level Information
+                        } catch {
+                            Write-Log -Message "  ERROR setting eduPass password for $($($student.Username)): $($_.Exception.Message)" -Level Error
+                        }
+                    } else {
+                        Write-Log -Message "  WARNING: Function Set-eduPassStudentAccountPassword not found. Password not set in eduPass." -Level Warning
                     }
                 } else {
-                    Write-Log -Message "  WARNING: Function Set-eduPassStudentAccountPassword not found. Password not set in eduPass." -Level Warning
+                    Write-Log -Message "  MOCK MODE: Simulating Set-eduPassStudentAccountPassword for $($student.Username)" -Level Information
                 }
-            } else {
-                Write-Log -Message "  MOCK MODE: Simulating Set-eduPassStudentAccountPassword for $($student.Username)" -Level Information
             }
         }
     }
 
+    if ($StudentsWithDetailChanges.Length -gt 0) {
+        $Global:ProcessingSummary.AppendLine("   Student Detail Changes (YearLevel/Class/Email):") | Out-Null
+        $Global:ProcessingSummary.Append($StudentsWithDetailChanges.ToString()) | Out-Null
+    }
     if ($EmptyPasswordCount -gt 0) {
-        Write-Log -Message "Generated passwords for $EmptyPasswordCount existing students with empty passwords." -Level Information
-        $ProcessingSummary.AppendLine("   SUCCESS: Generated passwords for $EmptyPasswordCount existing students with empty passwords.") | Out-Null
-        if ($StudentsWithNewlyGeneratedPasswords.Length -gt 0) {
-            $ProcessingSummary.AppendLine("   Students with newly generated passwords:") | Out-Null
-            $ProcessingSummary.Append($StudentsWithNewlyGeneratedPasswords.ToString()) | Out-Null
-        }
+        $Global:ProcessingSummary.AppendLine("   Existing Students with newly generated passwords:") | Out-Null
+        $Global:ProcessingSummary.Append($StudentsWithNewlyGeneratedPasswords.ToString()) | Out-Null
+        Write-Log -Message "Generated passwords for $EmptyPasswordCount existing students." -Level Information
     } else {
-        Write-Log -Message "No existing students with empty passwords found." -Level Verbose
-        $ProcessingSummary.AppendLine("   No existing students with empty passwords found.") | Out-Null
+        Write-Log -Message "No existing students required new password generation." -Level Verbose
     }
 
     # Process new students
@@ -318,8 +388,8 @@ Function Compare-StudentChanges {
             # $NewStudentDetailsForEmail.AppendLine("   - $($student.FirstName) $($student.LastName) ($($student.Username)), Year: $($student.YearLevel), Class: $($student.Class) - Account created.") | Out-Null
 
             if ($Global:Config.ScriptBehavior.MockMode) {
-                Write-Log -Message "  MOCK MODE: Simulating Set-eduPassStudentAccountPassword for $($student.Username)" -Level Information
-                Write-Log -Message "  MOCK MODE: Simulating Set-eduPassCloudServiceStatus (Google) for $($student.Username)" -Level Information
+                # Write-Log -Message "  MOCK MODE: Simulating Set-eduPassStudentAccountPassword for $($student.Username)" -Level Information
+                # Write-Log -Message "  MOCK MODE: Simulating Set-eduPassCloudServiceStatus (Google) for $($student.Username)" -Level Information
                 # Write-Log -Message "  MOCK MODE: Simulating Set-eduPassCloudServiceStatus (Intune) for $($student.Username)" -Level Information
             } else {
                 if ((Get-Command Set-eduPassStudentAccountPassword -ErrorAction SilentlyContinue) -and (Get-Command Set-eduPassCloudServiceStatus -ErrorAction SilentlyContinue)) {
@@ -350,6 +420,7 @@ Function Compare-StudentChanges {
         ProcessedNewStudents = if ($null -eq $ProcessedNewStudents) { @() } else { $ProcessedNewStudents }
         DepartedStudentsCount = if ($null -eq $DepartedStudents) { 0 } else { $DepartedStudents.Count }
     }
+    
 }
 
 Function Update-MasterStudentData {
@@ -425,6 +496,13 @@ Function Split-DataByYearLevel {
     )
     Write-Log -Message "Step 7: Splitting updated master list by year level (to $StudentsByYearLevelDir)..." -Level Information
     $Global:ProcessingSummary.AppendLine("7. Splitting master list by year level...") | Out-Null
+
+    if (-not (Get-Command Export-Excel -ErrorAction SilentlyContinue)) {
+        Write-Log -Message "CRITICAL: 'Export-Excel' command not found. The ImportExcel module is required or not loaded. Skipping Excel file generation for year levels." -Level Error
+        $Global:ProcessingSummary.AppendLine("   ERROR: ImportExcel module not found/loaded. Year level Excel files not generated.") | Out-Null
+        return
+    }
+
     if ($MasterListToSplit.Count -eq 0) {
         Write-Log -Message "No students in updated master list to split." -Level Warning
         $Global:ProcessingSummary.AppendLine("   No students to split by year level.") | Out-Null
@@ -438,20 +516,26 @@ Function Split-DataByYearLevel {
         if (-not [string]::IsNullOrWhiteSpace($year)) {
             $StudentsInYear = $group.Group
             $YearLevelFileName = "Year_$($year -replace '[^a-zA-Z0-9_-]', '_').xlsx"
-            # $StudentsByYearLevelDir path is now correctly pointing to Data/StudentsByYearLevel/
             $YearLevelFilePath = Join-Path -Path $StudentsByYearLevelDir -ChildPath $YearLevelFileName
-            $yearCsvDataToExport = $StudentsInYear | Select-Object $RequiredHeaders
-            $yearCsvOutputLines = $yearCsvDataToExport | ConvertTo-Csv -NoTypeInformation
-            if ($Global:Config.ScriptBehavior.RemoveQuotesFromCsv) {
-                $yearCsvOutputLines = $yearCsvOutputLines | ForEach-Object { $_ -replace '"','' }
-            }
+
+            $yearDataToExport = $StudentsInYear | Select-Object $RequiredHeaders
+
             try {
-                $yearCsvOutputLines | Set-Content -Path $YearLevelFilePath -Encoding UTF8 -Force
-                Write-Log -Message "  Saved $($StudentsInYear.Count) students for Year [$year] to: $YearLevelFilePath" -Level Information
-                $Global:ProcessingSummary.AppendLine("   - Year $($year): $($StudentsInYear.Count) students saved to /StudentsByYearLevel") | Out-Null
+                Write-Log -Message "Attempting to export $($yearDataToExport.Count) students for Year [$year] to '$YearLevelFilePath'..." -Level Debug
+
+                # Export to Excel with desired features
+                Export-Excel -Path $YearLevelFilePath -InputObject $yearDataToExport `
+                    -WorksheetName "Year $year Students" `
+                    -FreezeTopRow `
+                    -AutoFilter `
+                    -AutoSize `
+                    -BoldTopRow `
+
+                Write-Log -Message "  Saved $($StudentsInYear.Count) students for Year [$year] to Excel: $YearLevelFilePath" -Level Information
+                $Global:ProcessingSummary.AppendLine("   - Year $($year): $($StudentsInYear.Count) students saved to Excel file $YearLevelFilePath") | Out-Null
             } catch {
-                Write-Log -Message "  ERROR saving year file for [$year] to [$YearLevelFilePath]: $($_.Exception.Message)" -Level Error
-                $Global:ProcessingSummary.AppendLine("   - Year $($year): ERROR saving file - $($_.Exception.Message)") | Out-Null
+                Write-Log -Message "  ERROR saving year Excel file for [$year] to [$YearLevelFilePath]: $($_.Exception.Message)" -Level Error
+                $Global:ProcessingSummary.AppendLine("   - Year $($year): ERROR saving Excel file - $($_.Exception.Message)") | Out-Null
             }
         } else {
             $studentsWithNoYear = $group.Group.Count
@@ -461,9 +545,6 @@ Function Split-DataByYearLevel {
     }
 }
 
-#endregion Helper Functions
-
-#region Main Processing Logic
 $ScriptSuccess = $true 
 try {
     $ActualDownloadedFilePath = Get-StudentDataDownload
