@@ -2,5 +2,6 @@ Logs/
 Data/
 StudentsByYearLevel/
 *.csv
+!TEST-DoNotUse.csv
 *.json
 !config.json.template
