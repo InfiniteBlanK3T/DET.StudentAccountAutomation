@@ -1,4 +1,4 @@
-# Version 1.4
+# Version 1.6
 # Purpose: Automate daily updates to student accounts, configurable via an external JSON file.
 #          Supports new directory structure for scripts and data.
 #          Refactored email notification system.
@@ -18,7 +18,7 @@
             config.json
             Logs/
                 DailyStudentProcessLog_YYYYMMDD.log
-        Data/     (All student data files and subdirectories)
+        Archived-Logs/     (All student data files and subdirectories)
             MasterStudentData.csv (Or as named in config)
             ArchivedCurrentData/
             DailyDownloads/
@@ -39,7 +39,7 @@
 #>
 
 #region Global Settings and Path Definitions
-$ScriptVersion = "1.5"
+$ScriptVersion = "1.6"
 $ScriptStartTime = Get-Date
 $ErrorActionPreference = "Stop" 
 $VerbosePreference = "Continue"
@@ -47,7 +47,7 @@ $VerbosePreference = "Continue"
 # --- Base Path Assumptions ---
 $ScriptsDir = $PSScriptRoot 
 $ProjectRoot = (Get-Item $ScriptsDir).Parent.FullName
-$DataDir = Join-Path -Path $ProjectRoot -ChildPath "Data"
+$DataDir = Join-Path -Path $ProjectRoot -ChildPath "Archived-Logs"
 
 # --- Load Configuration (from Scripts folder) ---
 $ConfigPath = Join-Path -Path $ScriptsDir -ChildPath "config.json" # config.json is with the script
