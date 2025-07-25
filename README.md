@@ -1,6 +1,6 @@
 # Automated Student Data Processing Scripts
 
-### Version: 1.4
+### Version: 1.6
 
 Author: Thomas VO (ST02392) - Thomas.Vo3@education.vic.gov.au
 
