@@ -285,12 +285,13 @@ Function Compare-StudentChanges {
     $Global:ProcessingSummary.AppendLine("4.1 Processing students changes (YearLevel, Class, Password)..") | Out-Null
     $UpdatedExistingStudents = @()
     $StudentsWithNewlyGeneratedPasswords = [System.Text.StringBuilder]::new()
+    $StudentsWithDetailChanges = [System.Text.StringBuilder]::new()
     $EmptyPasswordCount = 0
 
     Write-Log -Message "Checking existing students for empty passwords..." -Level Verbose
 
-    if($ExistingStudents.Count -eq 0) {
-        Write-Log -Message "No existing students to process." -Level Information
+    if($ExistingStudents.Count -gt 0) {
+        Write-Log -Message "Processing $($ExistingStudents.Count) existing students..." -Level Information
 
         if (-not (Get-Command Get-RandomPasswordSimple -ErrorAction SilentlyContinue)) {
             Write-Log -Message "Utility function 'Get-RandomPasswordSimple' not found." -Level Error
@@ -308,55 +309,66 @@ Function Compare-StudentChanges {
             }
 
             # Check and update YearLevel
-            if ($masterSTudent.YearLevel -ne $downloadedStudentData.YearLevel) {
+            if ($masterStudent.YearLevel -ne $downloadedStudentData.YearLevel) {
                 # Debug
-                Write-Log -Message "Updating YearLevel for existing student '$usernameForLog' from '$($masterStudent.YearLevel)' to '$($downloadedStudentData.YearLevel)'" -Level Information
+                $oldYearLevel = $masterStudent.YearLevel
+                Write-Log -Message "Updating YearLevel for existing student '$usernameForLog' from '$oldYearLevel' to '$($downloadedStudentData.YearLevel)'" -Level Information
                 $masterStudent.YearLevel = $downloadedStudentData.YearLevel
+                $StudentsWithDetailChanges.AppendLine("   - $($masterStudent.FirstName) $($masterStudent.LastName) ($($masterStudent.Username)) - YearLevel: $oldYearLevel -> $($downloadedStudentData.YearLevel)") | Out-Null
             }
 
             # Check and update Class
             if ($masterStudent.Class -ne $downloadedStudentData.Class) {
                 #Debug
-                Write-Log -Message "Updating Class for existing student '$usernameForLog' from '$($masterStudent.Class)' to '$($downloadedStudentData.Class)'" -Level Information
+                $oldClass = $masterStudent.Class
+                Write-Log -Message "Updating Class for existing student '$usernameForLog' from '$oldClass' to '$($downloadedStudentData.Class)'" -Level Information
                 $masterStudent.Class = $downloadedStudentData.Class
+                $StudentsWithDetailChanges.AppendLine("   - $($masterStudent.FirstName) $($masterStudent.LastName) ($($masterStudent.Username)) - Class: $oldClass -> $($downloadedStudentData.Class)") | Out-Null
             }
             
             #Check and update Email
             $expectedEmail = "$($downloadedStudentData.Username)@schools.vic.edu.au"
             if ($masterStudent.Email -ne $expectedEmail) {
                 #Debug
-                Write-Log -Message "Updating Email for existing student '$usernameForLog' from '$($masterStudent.Email)' to '$expectedEmail'" -Level Information
+                $oldEmail = $masterStudent.Email
+                Write-Log -Message "Updating Email for existing student '$usernameForLog' from '$oldEmail' to '$expectedEmail'" -Level Information
                 $masterStudent.Email = $expectedEmail
+                $StudentsWithDetailChanges.AppendLine("   - $($masterStudent.FirstName) $($masterStudent.LastName) ($($masterStudent.Username)) - Email: $oldEmail -> $expectedEmail") | Out-Null
             }
 
             # Check and update Password if blank in master data
-            if ([string]::IsNullOrWhiteSpace($student.Password)) {
+            if ([string]::IsNullOrWhiteSpace($masterStudent.Password)) {
             
                 # Generate a new password
                 $newPassword = Get-RandomPasswordSimple
                 # Add/update Password property to the student object
-                $student.Password = $newPassword
+                $masterStudent.Password = $newPassword
                 $EmptyPasswordCount++
                 
-                $StudentsWithNewlyGeneratedPasswords.AppendLine("   - $($student.FirstName) $($student.LastName) ($($student.Username)), Year: $($student.YearLevel), Class: $($student.Class) - Password Generated.") | Out-Null
+                $StudentsWithNewlyGeneratedPasswords.AppendLine("   - $($masterStudent.FirstName) $($masterStudent.LastName) ($($masterStudent.Username)), Year: $($masterStudent.YearLevel), Class: $($masterStudent.Class) - Password Generated.") | Out-Null
   
                 # If not in MockMode, actually set the password in eduPass
                 if ($Global:Config.ScriptBehavior.MockMode -ne $true) {
                     if (Get-Command Set-eduPassStudentAccountPassword -ErrorAction SilentlyContinue) {
                         try {
-                            Set-eduPassStudentAccountPassword -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -Password $newPassword | Out-Null
-                            Write-Log -Message "  SUCCESS: eduPass password set for $($student.Username)." -Level Information
+                            Set-eduPassStudentAccountPassword -Identity $masterStudent.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -Password $newPassword | Out-Null
+                            Write-Log -Message "  SUCCESS: eduPass password set for $($masterStudent.Username)." -Level Information
                         } catch {
-                            Write-Log -Message "  ERROR setting eduPass password for $($($student.Username)): $($_.Exception.Message)" -Level Error
+                            Write-Log -Message "  ERROR setting eduPass password for $($($masterStudent.Username)): $($_.Exception.Message)" -Level Error
                         }
                     } else {
                         Write-Log -Message "  WARNING: Function Set-eduPassStudentAccountPassword not found. Password not set in eduPass." -Level Warning
                     }
                 } else {
-                    Write-Log -Message "  MOCK MODE: Simulating Set-eduPassStudentAccountPassword for $($student.Username)" -Level Information
+                    Write-Log -Message "  MOCK MODE: Simulating Set-eduPassStudentAccountPassword for $($masterStudent.Username)" -Level Information
                 }
             }
+            
+            # Add the processed student to the updated list
+            $UpdatedExistingStudents += $masterStudent
         }
+    } else {
+        Write-Log -Message "No existing students to process." -Level Information
     }
 
     if ($StudentsWithDetailChanges.Length -gt 0) {
@@ -393,16 +405,16 @@ Function Compare-StudentChanges {
                 # Write-Log -Message "  MOCK MODE: Simulating Set-eduPassCloudServiceStatus (Intune) for $($student.Username)" -Level Information
             } else {
                 if ((Get-Command Set-eduPassStudentAccountPassword -ErrorAction SilentlyContinue) -and (Get-Command Set-eduPassCloudServiceStatus -ErrorAction SilentlyContinue)) {
-                    try { Set-eduPassStudentAccountPassword -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -Password $newPassword; Write-Log -Message "  SUCCESS: eduPass password set for $($student.Username)." -Level Information } catch { Write-Log -Message "  ERROR setting eduPass password for $($($student.Username)): $($_.Exception.Message)" -Level Error }
-                    try { Set-eduPassCloudServiceStatus -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -AccountType student -Service google -Status Enabled; Write-Log -Message "  SUCCESS: Google Cloud Service enabled for $($student.Username)." -Level Information } catch { Write-Log -Message "  ERROR enabling Google Cloud Service for $($($student.Username)): $($_.Exception.Message)" -Level Error }
-                    try { Set-eduPassCloudServiceStatus -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -AccountType student -Service intune -Status Enabled; Write-Log -Message "  SUCCESS: Intune Cloud Service enabled for $($student.Username)." -Level Information } catch { Write-Log -Message "  ERROR enabling Intune Cloud Service for $($($student.Username)): $($_.Exception.Message)" -Level Error }
+                    try { Set-eduPassStudentAccountPassword -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -Password $newPassword; Write-Log -Message "  SUCCESS: eduPass password set for $($student.Username)." -Level Information } catch { Write-Log -Message "  ERROR setting eduPass password for $($student.Username): $($_.Exception.Message)" -Level Error }
+                    try { Set-eduPassCloudServiceStatus -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -AccountType student -Service google -Status Enabled; Write-Log -Message "  SUCCESS: Google Cloud Service enabled for $($student.Username)." -Level Information } catch { Write-Log -Message "  ERROR enabling Google Cloud Service for $($student.Username): $($_.Exception.Message)" -Level Error }
+                    try { Set-eduPassCloudServiceStatus -Identity $student.Username -SchoolNumber $Global:Config.SchoolSettings.SchoolNumber -AccountType student -Service intune -Status Enabled; Write-Log -Message "  SUCCESS: Intune Cloud Service enabled for $($student.Username)." -Level Information } catch { Write-Log -Message "  ERROR enabling Intune Cloud Service for $($student.Username): $($_.Exception.Message)" -Level Error }
                 } else {
                     Write-Log -Message "  WARNING: eduPass/Cloud service functions not found. Skipping live account modifications." -Level Warning
                     $Global:ProcessingSummary.AppendLine("     WARNING: Live account modification functions not found.") | Out-Null
                 }
             }
             $ProcessedNewStudents += $studentWithPassword
-            Write-Log -Message "Added new student $($student.Username) with generated password to processing list." -Level Verbose
+            # Write-Log -Message "Added new student $($student.Username) with generated password to processing list." -Level Verbose
         }
         $Global:ProcessingSummary.AppendLine("   SUCCESS: Processed $($ProcessedNewStudents.Count) new students.") | Out-Null
         if ($NewStudentDetailsForEmail.Length -gt 0) {
@@ -415,23 +427,31 @@ Function Compare-StudentChanges {
         $Global:ProcessingSummary.AppendLine("   No new students to process.") | Out-Null
     }
 
-    return @{ 
-        ExistingStudents = if ($null -eq $ExistingStudents) { @() } else { $ExistingStudents } 
-        ProcessedNewStudents = if ($null -eq $ProcessedNewStudents) { @() } else { $ProcessedNewStudents }
+    Write-Log -Message "DEBUG: About to return from Compare-StudentChanges" -Level Information
+    Write-Log -Message "DEBUG: UpdatedExistingStudents count: $($UpdatedExistingStudents.Count), ProcessedNewStudents count: $($ProcessedNewStudents.Count)" -Level Information
+    
+    $result = @{ 
+        ExistingStudents = if ($null -eq $UpdatedExistingStudents -or $UpdatedExistingStudents.Count -eq 0) { @() } else { $UpdatedExistingStudents } 
+        ProcessedNewStudents = if ($null -eq $ProcessedNewStudents -or $ProcessedNewStudents.Count -eq 0) { @() } else { $ProcessedNewStudents }
         DepartedStudentsCount = if ($null -eq $DepartedStudents) { 0 } else { $DepartedStudents.Count }
     }
+    
+    Write-Log -Message "DEBUG: Result ExistingStudents count: $($result.ExistingStudents.Count), ProcessedNewStudents count: $($result.ProcessedNewStudents.Count)" -Level Information
+    return $result
     
 }
 
 Function Update-MasterStudentData {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$false)]
         [AllowEmptyCollection()]
-        [array]$ExistingStudents,
-        [Parameter(Mandatory=$true)]
+        [AllowNull()]
+        [array]$ExistingStudents = @(),
+        [Parameter(Mandatory=$false)]
         [AllowEmptyCollection()]
-        [array]$ProcessedNewStudents 
+        [AllowNull()]
+        [array]$ProcessedNewStudents = @()
     )
 
     #Safe Guard Nullable Values:
@@ -439,6 +459,7 @@ Function Update-MasterStudentData {
     $ProcessedNewStudents = if ($null -eq $ProcessedNewStudents) { @() } else { $ProcessedNewStudents }
 
     Write-Log -Message "Step 5 & 6: Updating, saving, and archiving master student list..." -Level Information
+    Write-Log -Message "DEBUG: Inside Update-MasterStudentData - ExistingStudents count: $($ExistingStudents.Count), ProcessedNewStudents count: $($ProcessedNewStudents.Count)" -Level Information
     $Global:ProcessingSummary.AppendLine("5. Updating master student list...") | Out-Null
     
     # Write-Host "DEBUG (Inside Update-MasterStudentData): Count of `$ProcessedNewStudents param: $($ProcessedNewStudents.Count)"
@@ -550,7 +571,41 @@ try {
     $ActualDownloadedFilePath = Get-StudentDataDownload
     $StudentData = Get-StudentDataLists -DownloadedFilePath $ActualDownloadedFilePath
     $ProcessingResult = Compare-StudentChanges -DownloadedStudents $StudentData.DownloadedStudents -MasterStudents $StudentData.MasterStudents
-    $FinalMasterList = Update-MasterStudentData -ExistingStudents ($ProcessingResult.ExistingStudents ?? @()) -ProcessedNewStudents ($ProcessingResult.ProcessedNewStudents ?? @())
+    
+    # Safely extract results with explicit null checks and force array types
+    $ExistingStudentsToProcess = @()
+    $ProcessedNewStudentsToUse = @()
+    
+    if ($null -ne $ProcessingResult.ExistingStudents) {
+        $ExistingStudentsToProcess = @($ProcessingResult.ExistingStudents)
+    }
+    
+    if ($null -ne $ProcessingResult.ProcessedNewStudents) {
+        $ProcessedNewStudentsToUse = @($ProcessingResult.ProcessedNewStudents)
+    }
+    
+    Write-Log -Message "Compare-StudentChanges completed: ExistingStudents: $($ExistingStudentsToProcess.Count), NewStudents: $($ProcessedNewStudentsToUse.Count), DepartedStudents: $($ProcessingResult.DepartedStudentsCount)" -Level Information
+    Write-Log -Message "Processing results - ExistingStudents: $($ExistingStudentsToProcess.Count), NewStudents: $($ProcessedNewStudentsToUse.Count)" -Level Information
+    
+    # Debug: Check variable types and values before function call
+    Write-Log -Message "DEBUG: About to call Update-MasterStudentData" -Level Information
+    Write-Log -Message "DEBUG: ExistingStudentsToProcess is null: $($null -eq $ExistingStudentsToProcess)" -Level Information
+    Write-Log -Message "DEBUG: ExistingStudentsToProcess type: $($ExistingStudentsToProcess.GetType().Name)" -Level Information
+    Write-Log -Message "DEBUG: ProcessedNewStudentsToUse is null: $($null -eq $ProcessedNewStudentsToUse)" -Level Information
+    Write-Log -Message "DEBUG: ProcessedNewStudentsToUse type: $($ProcessedNewStudentsToUse.GetType().Name)" -Level Information
+    
+    # Ensure arrays are properly initialized
+    if ($null -eq $ExistingStudentsToProcess) { $ExistingStudentsToProcess = @() }
+    if ($null -eq $ProcessedNewStudentsToUse) { $ProcessedNewStudentsToUse = @() }
+    
+    # Use splatting for safer parameter passing
+    $updateParams = @{
+        ExistingStudents = $ExistingStudentsToProcess
+        ProcessedNewStudents = $ProcessedNewStudentsToUse
+    }
+    
+    Write-Log -Message "DEBUG: Calling Update-MasterStudentData with splatting" -Level Information
+    $FinalMasterList = Update-MasterStudentData @updateParams
     Split-DataByYearLevel -MasterListToSplit $FinalMasterList
     
     Write-Log -Message "Daily student processing completed successfully." -Level Information

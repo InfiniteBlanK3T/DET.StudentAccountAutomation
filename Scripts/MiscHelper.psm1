@@ -61,7 +61,7 @@ function Get-RandomPasswordSimple {
     $word = Get-Random -InputObject $passwordLists
     $numbers = "{0:D4}" -f (Get-Random -Minimum 0 -Maximum 9999) # Ensures 4 digits with leading zeros
     $password = "$word.$numbers"
-    Write-Log "[Utils] Generated random password pattern: $word.$numbers"
+    # Write-Log "[Utils] Generated random password pattern: $word.$numbers"
     return $password
 }
 
