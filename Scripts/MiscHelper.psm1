@@ -124,16 +124,22 @@ Function Send-NotificationEmail {
     $emailRecipients = @()
     $emailSubject = ""
     $emailBody = ""
-    $sendThisEmail = $true # Assume email should be sent unless specific conditions prevent it
+    $useHtml = $Global:Config.EmailNotification.UseHtmlFormat -eq $true
 
-    # Determine recipients
+    # Determine recipients based on script success/failure and notification type
     if ($Global:Config.ScriptBehavior.MockMode -and -not [string]::IsNullOrWhiteSpace($Global:Config.ScriptBehavior.TestEmail)) {
         $emailRecipients = $Global:Config.ScriptBehavior.TestEmail.Split(';') | ForEach-Object {$_.Trim()} | Where-Object {$_ -ne ""}
         Write-Log -Message "MOCK MODE: Email will be sent to TestEmail: $($Global:Config.ScriptBehavior.TestEmail)" -Level Information
-    } elseif ($NotificationType -eq "AdminError" -and $Global:Config.EmailNotification.AdminNotifyOnError -and -not [string]::IsNullOrWhiteSpace($Global:Config.EmailNotification.AdminEmailOnError)) {
-        $emailRecipients = $Global:Config.EmailNotification.AdminEmailOnError.Split(';') | ForEach-Object {$_.Trim()} | Where-Object {$_ -ne ""}
-    } elseif ($NotificationType -eq "ProcessSummary" -and -not [string]::IsNullOrWhiteSpace($Global:Config.EmailNotification.To)) {
-        $emailRecipients = $Global:Config.EmailNotification.To.Split(';') | ForEach-Object {$_.Trim()} | Where-Object {$_ -ne ""}
+    } elseif ($NotificationType -eq "AdminError" -or -not $IsScriptSuccessful) {
+        # Send to admin only when there's an error or script failure
+        if (-not [string]::IsNullOrWhiteSpace($Global:Config.EmailNotification.AdminOnly)) {
+            $emailRecipients = $Global:Config.EmailNotification.AdminOnly.Split(';') | ForEach-Object {$_.Trim()} | Where-Object {$_ -ne ""}
+        }
+    } elseif ($NotificationType -eq "ProcessSummary" -and $IsScriptSuccessful) {
+        # Send to all team members when script is successful
+        if (-not [string]::IsNullOrWhiteSpace($Global:Config.EmailNotification.TeamMembers)) {
+            $emailRecipients = $Global:Config.EmailNotification.TeamMembers.Split(';') | ForEach-Object {$_.Trim()} | Where-Object {$_ -ne ""}
+        }
     }
 
     if ($emailRecipients.Count -eq 0) {
@@ -141,36 +147,19 @@ Function Send-NotificationEmail {
         return
     }
 
-    # Determine subject and body
+    # Create nicely formatted emails
     if ($NotificationType -eq "AdminError") {
-        $emailSubject = "CRITICAL ERROR in Daily Student Update Script - $($Global:Config.SchoolSettings.SchoolName) - $(Get-Date -Format 'yyyy-MM-dd')"
-        $emailBody = "A critical error occurred in the Daily Student Update script for $($Global:Config.SchoolSettings.SchoolName).`n`n"
-        $emailBody += "Error Message: $CustomMessage`n`n"
-        if (-not [string]::IsNullOrWhiteSpace($CustomDetails)) {
-            $emailBody += "Error Details: $CustomDetails`n`n"
-        }
-        $emailBody += "Please check the log file for more details: $LogFilePath"
+        $emailSubject = "🚨 CRITICAL ERROR - Student Account Automation - $($Global:Config.SchoolSettings.SchoolName) - $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+        $emailBody = Get-AdminErrorEmailBody -CustomMessage $CustomMessage -CustomDetails $CustomDetails -UseHtml $useHtml
     } elseif ($NotificationType -eq "ProcessSummary") {
         if ($IsScriptSuccessful) {
-            $emailSubject = "SUCCESS - $($Global:Config.EmailNotification.SubjectPrefix) for $($Global:Config.SchoolSettings.SchoolName) - $(Get-Date -Format 'yyyy-MM-dd')"
-            Write-Log -Message "Script completed successfully. Preparing success email." -Level Information
+            $emailSubject = "✅ SUCCESS - $($Global:Config.EmailNotification.SubjectPrefix) - $($Global:Config.SchoolSettings.SchoolName) - $(Get-Date -Format 'yyyy-MM-dd')"
+            Write-Log -Message "Script completed successfully. Preparing success email for team members." -Level Information
         } else {
-            $emailSubject = "FAILED - $($Global:Config.EmailNotification.SubjectPrefix) for $($Global:Config.SchoolSettings.SchoolName) - $(Get-Date -Format 'yyyy-MM-dd')"
-            Write-Log -Message "Script failed. Preparing failure email." -Level Information
-            # If script failed, and SendOnSuccessOnly is true, don't send summary email
-            if ($Global:Config.EmailNotification.SendOnSuccessOnly) {
-                Write-Log -Message "SendOnSuccessOnly is true and script failed. Skipping process summary email." -Level Information
-                $sendThisEmail = $false
-            }
+            $emailSubject = "❌ FAILED - $($Global:Config.EmailNotification.SubjectPrefix) - $($Global:Config.SchoolSettings.SchoolName) - $(Get-Date -Format 'yyyy-MM-dd')"
+            Write-Log -Message "Script failed. Preparing failure email for admin only." -Level Information
         }
-        $emailBody = $Global:ProcessingSummary.ToString()
-        if (-not [string]::IsNullOrWhiteSpace($CustomMessage)) {
-            $emailBody += "`n`nAdditional Information:`n$CustomMessage"
-        }
-    }
-
-    if (-not $sendThisEmail) {
-        return # Email sending was intentionally skipped by logic above
+        $emailBody = Get-ProcessSummaryEmailBody -IsSuccessful $IsScriptSuccessful -CustomMessage $CustomMessage -UseHtml $useHtml
     }
 
     $emailParams = @{
@@ -180,22 +169,269 @@ Function Send-NotificationEmail {
         Body       = $emailBody
         SmtpServer = $Global:Config.EmailNotification.SmtpServer
         Port       = $Global:Config.EmailNotification.Port
+        Encoding   = [System.Text.Encoding]::UTF8
     }
-    if ($Global:Config.EmailNotification.BodyAsHtml) { $emailParams.BodyAsHtml = $true }
+    
+    if ($useHtml) { 
+        $emailParams.BodyAsHtml = $true 
+    }
 
     try {
-        Write-Log -Message "Attempting to send $NotificationType email to: $($emailRecipients -join '; ')" -Level Information
+        $recipientType = if ($NotificationType -eq "AdminError" -or -not $IsScriptSuccessful) { "Admin" } else { "Team Members" }
+        Write-Log -Message "Attempting to send $NotificationType email to ${recipientType}: $($emailRecipients -join '; ')" -Level Information
         Send-MailMessage @emailParams
-        Write-Log -Message "$NotificationType email sent successfully." -Level Information
-        if ($NotificationType -eq "ProcessSummary") { # Append to summary only for process summary email
-            $Global:ProcessingSummary.AppendLine("Email Notification Sent To: $($emailRecipients -join '; ')") | Out-Null
+        Write-Log -Message "$NotificationType email sent successfully to ${recipientType}." -Level Information
+        if ($NotificationType -eq "ProcessSummary") {
+            $Global:ProcessingSummary.AppendLine("Email Notification Sent To (${recipientType}): $($emailRecipients -join '; ')") | Out-Null
         }
     } catch {
         Write-Log -Message "Failed to send $NotificationType email: $($_.Exception.Message)" -Level Error
         if ($NotificationType -eq "ProcessSummary") {
             $Global:ProcessingSummary.AppendLine("EMAIL SEND FAILED ($($NotificationType)): $($_.Exception.Message)") | Out-Null
         }
-        # For AdminError, the failure to send is critical but already logged.
+    }
+}
+
+Function Get-AdminErrorEmailBody {
+    [CmdletBinding()]
+    param(
+        [string]$CustomMessage,
+        [string]$CustomDetails,
+        [bool]$UseHtml
+    )
+    
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $school = $Global:Config.SchoolSettings.SchoolName
+    $schoolNumber = $Global:Config.SchoolSettings.SchoolNumber
+    
+    if ($UseHtml) {
+        return @"
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .header { background-color: #dc3545; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .content { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .error-box { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 10px; border-radius: 3px; margin: 10px 0; }
+        .details-box { background-color: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 10px; border-radius: 3px; margin: 10px 0; }
+        .footer { color: #6c757d; font-size: 12px; margin-top: 20px; }
+        h2 { color: #dc3545; }
+        h3 { color: #495057; }
+        .urgent { color: #dc3545; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚨 CRITICAL ERROR - Student Account Automation</h1>
+        <p><strong>School:</strong> $school (Number: $schoolNumber)</p>
+        <p><strong>Timestamp:</strong> $timestamp</p>
+    </div>
+    
+    <div class="content">
+        <h2>Error Summary</h2>
+        <p class="urgent">A critical error has occurred in the Daily Student Account Automation script that requires immediate attention.</p>
+        
+        <div class="error-box">
+            <h3>🔴 Error Message:</h3>
+            <p>$CustomMessage</p>
+        </div>
+        
+        $(if (-not [string]::IsNullOrWhiteSpace($CustomDetails)) {
+            "<div class='details-box'>
+                <h3>📋 Technical Details:</h3>
+                <pre>$CustomDetails</pre>
+            </div>"
+        })
+        
+        <h3>📝 Next Steps:</h3>
+        <ul>
+            <li>Check the log file for detailed information: <code>$LogFilePath</code></li>
+            <li>Verify eduSTAR and network connectivity</li>
+            <li>Check for any recent system changes</li>
+            <li>Restart the script manually after resolving the issue</li>
+        </ul>
+    </div>
+    
+    <div class="footer">
+        <p>This email was automatically generated by the Student Account Automation system.</p>
+        <p>System: $($env:COMPUTERNAME) | Script Version: $($Global:ScriptVersion)</p>
+    </div>
+</body>
+</html>
+"@
+    } else {
+        return @"
+🚨 CRITICAL ERROR - Student Account Automation
+==========================================
+
+School: $school (Number: $schoolNumber)
+Timestamp: $timestamp
+
+ERROR SUMMARY:
+A critical error has occurred in the Daily Student Account Automation script that requires immediate attention.
+
+🔴 Error Message:
+$CustomMessage
+
+$(if (-not [string]::IsNullOrWhiteSpace($CustomDetails)) {
+"📋 Technical Details:
+$CustomDetails
+"})
+
+📝 Next Steps:
+• Check the log file for detailed information: $LogFilePath
+• Verify eduSTAR and network connectivity
+• Check for any recent system changes
+• Restart the script manually after resolving the issue
+
+This email was automatically generated by the Student Account Automation system.
+System: $($env:COMPUTERNAME) | Script Version: $($Global:ScriptVersion)
+"@
+    }
+}
+
+Function Get-ProcessSummaryEmailBody {
+    [CmdletBinding()]
+    param(
+        [bool]$IsSuccessful,
+        [string]$CustomMessage,
+        [bool]$UseHtml
+    )
+    
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $school = $Global:Config.SchoolSettings.SchoolName
+    $schoolNumber = $Global:Config.SchoolSettings.SchoolNumber
+    $statusIcon = if ($IsSuccessful) { "✅" } else { "❌" }
+    $statusText = if ($IsSuccessful) { "SUCCESS" } else { "FAILED" }
+    $statusColor = if ($IsSuccessful) { "#28a745" } else { "#dc3545" }
+    $backgroundClass = if ($IsSuccessful) { "success" } else { "failure"  }
+    
+    # Parse the processing summary to extract key statistics
+    $summaryText = $Global:ProcessingSummary.ToString()
+    $newStudents = if ($summaryText -match "New Students: (\d+)") { $matches[1] } else { "N/A" }
+    $departedStudents = if ($summaryText -match "Departed Students: (\d+)") { $matches[1] } else { "N/A" }
+    $existingStudents = if ($summaryText -match "Retained Existing Students: (\d+)") { $matches[1] } else { "N/A" }
+    $processedNew = if ($summaryText -match "Processed (\d+) new students") { $matches[1] } else { "N/A" }
+    
+    if ($UseHtml) {
+        return @"
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .header { background-color: $statusColor; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .summary-stats { display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; }
+        .stat-card { background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 15px; border-radius: 5px; min-width: 150px; text-align: center; }
+        .stat-number { font-size: 24px; font-weight: bold; color: $statusColor; }
+        .stat-label { color: #6c757d; font-size: 12px; }
+        .content { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .details { background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #dee2e6; }
+        .footer { color: #6c757d; font-size: 12px; margin-top: 20px; }
+        .success { border-left: 5px solid #28a745; }
+        .failure { border-left: 5px solid #dc3545; }
+        pre { background-color: #f1f1f1; padding: 10px; border-radius: 3px; overflow-x: auto; font-size: 11px; }
+        h2 { color: $statusColor; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>$statusIcon Daily Student Account Update Report</h1>
+        <p><strong>Status:</strong> $statusText</p>
+        <p><strong>School:</strong> $school (Number: $schoolNumber)</p>
+        <p><strong>Run Time:</strong> $timestamp</p>
+    </div>
+    
+    $(if ($IsSuccessful) {
+        "<div class='summary-stats'>
+            <div class='stat-card'>
+                <div class='stat-number'>$newStudents</div>
+                <div class='stat-label'>NEW STUDENTS</div>
+            </div>
+            <div class='stat-card'>
+                <div class='stat-number'>$departedStudents</div>
+                <div class='stat-label'>DEPARTED STUDENTS</div>
+            </div>
+            <div class='stat-card'>
+                <div class='stat-number'>$existingStudents</div>
+                <div class='stat-label'>EXISTING STUDENTS</div>
+            </div>
+            <div class='stat-card'>
+                <div class='stat-number'>$processedNew</div>
+                <div class='stat-label'>ACCOUNTS CREATED</div>
+            </div>
+        </div>"
+    })
+    
+    <div class="content $backgroundClass">
+        <h2>📊 Processing Details</h2>
+        <div class="details">
+            <pre>$summaryText</pre>
+        </div>
+        
+        $(if (-not [string]::IsNullOrWhiteSpace($CustomMessage)) {
+            "<h3>ℹ️ Additional Information</h3>
+            <p>$CustomMessage</p>"
+        })
+    </div>
+    
+    $(if ($IsSuccessful) {
+        "<div style='background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 15px; border-radius: 5px; margin-bottom: 20px;'>
+            <h3>🎉 All Tasks Completed Successfully!</h3>
+            <p>The daily student account update process has been completed without any issues. All new student accounts have been created and existing accounts have been updated as needed.</p>
+        </div>"
+    } else {
+        "<div style='background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 15px; border-radius: 5px; margin-bottom: 20px;'>
+            <h3>⚠️ Process Failed</h3>
+            <p>The daily student account update process encountered errors and could not complete successfully. Please check the log files and contact the system administrator.</p>
+        </div>"
+    })
+    
+    <div class="footer">
+        <p>This email was automatically generated by the Student Account Automation system.</p>
+        <p>System: $($env:COMPUTERNAME) | Script Version: $(if ($Global:ScriptVersion) { $Global:ScriptVersion } else { 'Unknown' })</p>
+        <p>For support, contact: $($Global:Config.EmailNotification.AdminOnly)</p>
+    </div>
+</body>
+</html>
+"@
+    } else {
+        return @"
+$statusIcon Daily Student Account Update Report
+==========================================
+
+Status: $statusText
+School: $school (Number: $schoolNumber)
+Run Time: $timestamp
+
+$(if ($IsSuccessful) {
+"📊 SUMMARY STATISTICS:
+• New Students: $newStudents
+• Departed Students: $departedStudents  
+• Existing Students: $existingStudents
+• Accounts Created: $processedNew
+"})
+
+📋 PROCESSING DETAILS:
+$summaryText
+
+$(if (-not [string]::IsNullOrWhiteSpace($CustomMessage)) {
+"ℹ️ ADDITIONAL INFORMATION:
+$CustomMessage
+"})
+
+$(if ($IsSuccessful) {
+"🎉 All tasks completed successfully!
+The daily student account update process has been completed without any issues."
+} else {
+"⚠️ Process failed!
+The daily student account update process encountered errors. Please check the log files."})
+
+This email was automatically generated by the Student Account Automation system.
+System: $($env:COMPUTERNAME) | Script Version: $(if ($Global:ScriptVersion) { $Global:ScriptVersion } else { 'Unknown' })
+For support, contact: $($Global:Config.EmailNotification.AdminOnly)
+"@
     }
 }
 
@@ -287,6 +523,6 @@ function Invoke-FileCleanUp {
 }
 
 # Export the functions for use in other scripts
-Export-ModuleMember -Function Compare-StudentLists, Get-RandomPasswordSimple, Test-DuplicationEntry, Send-NotificationEmail, Invoke-FileCleanUp
+Export-ModuleMember -Function Compare-StudentLists, Get-RandomPasswordSimple, Test-DuplicationEntry, Send-NotificationEmail, Get-AdminErrorEmailBody, Get-ProcessSummaryEmailBody, Invoke-FileCleanUp
 
 Write-Log "[Utils] MiscHelper.psm1 loaded."

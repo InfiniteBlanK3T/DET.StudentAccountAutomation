@@ -4,7 +4,7 @@
 #          Refactored email notification system.
 # Author: Thomas VO (ST02392)
 # Date: 16-05-2025 (Original)
-# Modified: 26-05-2025 
+# Modified: 25-07-2025 
 <#
 .SYNOPSIS
     Automates daily updates to student accounts, using a specific directory structure.
@@ -22,7 +22,7 @@
             MasterStudentData.csv (Or as named in config)
             ArchivedCurrentData/
             DailyDownloads/
-            StudentsByYearLevel/
+        StudentsByYearLevel/
 
     Actions:
     1. Loads configuration from 'Scripts/config.json'.
