@@ -1,4 +1,4 @@
-# Version 1.6
+# Version 1.6.1
 # Purpose: Automate daily updates to student accounts, configurable via an external JSON file.
 #          Supports new directory structure for scripts and data.
 #          Refactored email notification system.
@@ -38,8 +38,46 @@
     - 'config.json' and 'StudentDataUtils.psm1' are expected in the same 'Scripts' folder.
 #>
 
-#region Global Settings and Path Definitions
-$ScriptVersion = "1.6"
+# --- region Task Scheduler Specific Optimizations ---
+# Detect if running under Task Scheduler
+$IsTaskScheduler = [Environment]::UserInteractive -eq $false
+
+if ($IsTaskScheduler) {
+    Write-Host "Detected Task Scheduler execution mode" -ForegroundColor Yellow
+    
+    # Force non-interactive mode
+    $PSDefaultParameterValues['*:Confirm'] = $false
+    $PSDefaultParameterValues['*:Force'] = $true
+    
+    # Suppress all unnecessary output
+    $ProgressPreference = 'SilentlyContinue'
+    $WarningPreference = 'SilentlyContinue'  # Change from Continue
+    $InformationPreference = 'SilentlyContinue'  # Change from Continue
+    $VerbosePreference = 'SilentlyContinue'
+    
+    # Set culture explicitly (Task Scheduler may have different culture)
+    [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::InvariantCulture
+    [System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::InvariantCulture
+}
+
+# Add heartbeat logging for Task Scheduler debugging
+function Write-Heartbeat {
+    param([string]$Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    if ($IsTaskScheduler) {
+        # Write to a separate heartbeat log for Task Scheduler
+        $heartbeatLog = Join-Path $env:TEMP "StudentUpdate_Heartbeat_$(Get-Date -Format 'yyyyMMdd').log"
+        Add-Content -Path $heartbeatLog -Value "$timestamp - $Message" -ErrorAction SilentlyContinue
+    }
+    Write-Host "$timestamp - HEARTBEAT: $Message" -ForegroundColor Cyan
+}
+
+Write-Heartbeat "Script started - PowerShell Version: $($PSVersionTable.PSVersion)"
+Write-Heartbeat "Running as user: $($env:USERNAME)"
+Write-Heartbeat "Working directory: $((Get-Location).Path)"
+# --- endregion Task Scheduler Specific Optimizations ---
+
+$ScriptVersion = "1.6.1"
 $ScriptStartTime = Get-Date
 $ErrorActionPreference = "Stop" 
 $VerbosePreference = "Continue"
@@ -544,13 +582,63 @@ Function Split-DataByYearLevel {
             try {
                 Write-Log -Message "Attempting to export $($yearDataToExport.Count) students for Year [$year] to '$YearLevelFilePath'..." -Level Debug
 
-                # Export to Excel with desired features
-                Export-Excel -Path $YearLevelFilePath -InputObject $yearDataToExport `
-                    -WorksheetName "Year $year Students" `
-                    -FreezeTopRow `
-                    -AutoFilter `
-                    -AutoSize `
-                    -BoldTopRow `
+                # Export to Excel with enhanced professional formatting
+                $excelParams = @{
+                    Path = $YearLevelFilePath
+                    InputObject = $yearDataToExport
+                    WorksheetName = "Year $year Students"
+                    FreezeTopRow = $true
+                    AutoFilter = $true
+                    AutoSize = $true
+                    BoldTopRow = $true
+                    TableStyle = "Medium6"  # Professional blue table style
+                    TableName = "StudentsYear$year"
+                    PassThru = $true
+                }
+                
+                $excel = Export-Excel @excelParams
+                
+                # Additional formatting for the worksheet
+                $worksheet = $excel.Workbook.Worksheets["Year $year Students"]
+                
+                
+                # Format data rows with alternating colors
+                if ($yearDataToExport.Count -gt 0) {
+                    $dataRange = $worksheet.Cells["A2:G$($yearDataToExport.Count + 3)"]  # Adjust based on actual data
+                    $dataRange.Style.Border.Top.Style = "Thin"
+                    $dataRange.Style.Border.Bottom.Style = "Thin"
+                    $dataRange.Style.Border.Left.Style = "Thin"
+                    $dataRange.Style.Border.Right.Style = "Thin"
+                    
+                    # Add alternating row colors
+                    for ($i = 4; $i -le ($yearDataToExport.Count + 3); $i += 2) {
+                        $rowRange = $worksheet.Cells["A$i`:G$i"]
+                        $rowRange.Style.Fill.PatternType = "Solid"
+                        $rowRange.Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::FromArgb(242, 245, 250))  # Light blue
+                    }
+                }
+                
+                # Format specific columns
+                # Username column - make it stand out
+                $usernameColumn = $worksheet.Cells["A2:A$($yearDataToExport.Count)"]
+                $usernameColumn.Style.Font.Bold = $true
+                
+                # Add a note about password security
+                $noteCell = $worksheet.Cells["A$($yearDataToExport.Count + 5)"]
+                $noteCell.Value = "⚠️ IMPORTANT: Passwords are sensitive information. Handle with care and follow school security policies."
+                $noteCell.Style.Font.Italic = $true
+                $noteCell.Style.Font.Color.SetColor([System.Drawing.Color]::FromArgb(156, 87, 0))
+                
+                # Add generation timestamp
+                $timestampCell = $worksheet.Cells["A$($yearDataToExport.Count + 6)"]
+                $timestampCell.Value = "Generated: $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss') by Student Account Automation Generator."
+                $timestampCell.Style.Font.Size = 9
+                $timestampCell.Style.Font.Italic = $true
+                $timestampCell.Style.Font.Color.SetColor([System.Drawing.Color]::Gray)
+                
+                # Save the workbook with formatting
+                $excel.Save()
+                $excel.Dispose()
 
                 Write-Log -Message "  Saved $($StudentsInYear.Count) students for Year [$year] to Excel: $YearLevelFilePath" -Level Information
                 $Global:ProcessingSummary.AppendLine("   - Year $($year): $($StudentsInYear.Count) students saved to Excel file $YearLevelFilePath") | Out-Null
