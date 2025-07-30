@@ -1,10 +1,11 @@
-# Version 1.6.1
+# Version 1.7.0
 # Purpose: Automate daily updates to student accounts, configurable via an external JSON file.
 #          Supports new directory structure for scripts and data.
 #          Refactored email notification system.
+#          NEW: PDF generation by year level and class with alphabetical sorting by first name.
 # Author: Thomas VO (ST02392)
 # Date: 16-05-2025 (Original)
-# Modified: 25-07-2025 
+# Modified: 30-07-2025 - Added PDF generation by class, removed Excel dependency 
 <#
 .SYNOPSIS
     Automates daily updates to student accounts, using a specific directory structure.
@@ -23,6 +24,15 @@
             ArchivedCurrentData/
             DailyDownloads/
         StudentsByYearLevel/
+            Year_00/
+                Year_00_Class_0A.pdf
+                Year_00_Class_0B.pdf
+            Year_01/
+                Year_01_Class_1A.pdf
+                Year_01_Class_1B.pdf
+            Year_02/
+                Year_02_Class_2H.pdf
+                Year_02_Class_2L.pdf
 
     Actions:
     1. Loads configuration from 'Scripts/config.json'.
@@ -30,7 +40,7 @@
     3. Defines paths based on the new /Scripts and /Data structure.
     4. Imports utility functions from 'Scripts/StudentDataUtils.psm1'.
     5. If 'Data/MasterStudentData.csv' is not found, an initial run is performed, creating the file from the first download.
-    6. Downloads, compares, processes new students, updates master list, archives, and splits data by year level into the 'Data/' subfolders.
+    6. Downloads, compares, processes new students, updates master list, archives, and generates PDF files by year level and class with alphabetical sorting.
     7. Sends email notifications using a refactored system.
 .NOTES
     - Assumes this script resides in a 'Scripts' folder.
@@ -77,7 +87,6 @@ Write-Heartbeat "Running as user: $($env:USERNAME)"
 Write-Heartbeat "Working directory: $((Get-Location).Path)"
 # --- endregion Task Scheduler Specific Optimizations ---
 
-$ScriptVersion = "1.6.1"
 $ScriptStartTime = Get-Date
 $ErrorActionPreference = "Stop" 
 $VerbosePreference = "Continue"
@@ -155,7 +164,7 @@ Function Global:Write-Log {
     catch { Write-Warning "Failed to write to log file $($LogFilePath): $($_.Exception.Message)" }
 }
 
-Write-Log -Message "Script execution started. Version $ScriptVersion" -Level Information
+Write-Log -Message "Script execution started. Version $($Global:Config.ScriptBehavior.ScriptVersion)" -Level Information
 $Global:ProcessingSummary.AppendLine("Student Data Processing Report for $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')") | Out-Null
 $Global:ProcessingSummary.AppendLine("School: $($Global:Config.SchoolSettings.SchoolName) (Number: $($Global:Config.SchoolSettings.SchoolNumber))") | Out-Null
 $Global:ProcessingSummary.AppendLine("----------------------------------------------------") | Out-Null
@@ -178,14 +187,7 @@ catch {
     Exit 1 
 }
 
-try {
-    Write-Log -Message "Importing ImportExcel module..." -Level Verbose
-    Import-Module ImportExcel -ErrorAction Stop
-    Write-Log -Message "Successfully imported ImportExcel module." -Level Information
-} catch {
-    Write-Log -Message "Failed to import the 'ImportExcel' module. This module is required for creating .xlsx files. Please install it by running 'Install-Module ImportExcel -Scope CurrentUser' in PowerShell. Error: $($_.Exception.Message)" -Level Error
-    $Global:ProcessingSummary.AppendLine("   CRITICAL ERROR: ImportExcel module not found. Year level Excel files cannot be generated.") | Out-Null
-}
+# PDF Generation will use built-in PowerShell capabilities without external dependencies
 
 # --- Data File and Directory Paths (relative to DataDir) ---
 $MasterStudentDataFile = Join-Path -Path $DataDir -ChildPath $Global:Config.FileNames.MasterStudentData
@@ -553,109 +555,113 @@ Function Split-DataByYearLevel {
         [Parameter(Mandatory=$true)]
         [array]$MasterListToSplit
     )
-    Write-Log -Message "Step 7: Splitting updated master list by year level (to $StudentsByYearLevelDir)..." -Level Information
-    $Global:ProcessingSummary.AppendLine("7. Splitting master list by year level...") | Out-Null
-
-    if (-not (Get-Command Export-Excel -ErrorAction SilentlyContinue)) {
-        Write-Log -Message "CRITICAL: 'Export-Excel' command not found. The ImportExcel module is required or not loaded. Skipping Excel file generation for year levels." -Level Error
-        $Global:ProcessingSummary.AppendLine("   ERROR: ImportExcel module not found/loaded. Year level Excel files not generated.") | Out-Null
-        return
-    }
+    Write-Log -Message "Step 7: Generating PDF files by year level and class (to $StudentsByYearLevelDir)..." -Level Information
+    $Global:ProcessingSummary.AppendLine("7. Generating PDF files by year level and class...") | Out-Null
 
     if ($MasterListToSplit.Count -eq 0) {
         Write-Log -Message "No students in updated master list to split." -Level Warning
         $Global:ProcessingSummary.AppendLine("   No students to split by year level.") | Out-Null
         return
     }
+
     $RequiredHeaders = @("Username","FirstName","LastName","YearLevel","Class","Email","Password") 
+    
+    # Initialize counters for summary
+    $totalPDFsGenerated = 0
+    $totalStudentsProcessed = 0
+    $yearLevelsProcessed = @()
+    $errorCount = 0
+    
+    # Group by Year Level first
     $GroupedByYear = $MasterListToSplit | Group-Object -Property YearLevel
     
-    foreach ($group in $GroupedByYear) {
-        $year = $group.Name
+    foreach ($yearGroup in $GroupedByYear) {
+        $year = $yearGroup.Name
         if (-not [string]::IsNullOrWhiteSpace($year)) {
-            $StudentsInYear = $group.Group
-            $YearLevelFileName = "Year_$($year -replace '[^a-zA-Z0-9_-]', '_').xlsx"
-            $YearLevelFilePath = Join-Path -Path $StudentsByYearLevelDir -ChildPath $YearLevelFileName
-
-            $yearDataToExport = $StudentsInYear | Select-Object $RequiredHeaders
-
-            try {
-                Write-Log -Message "Attempting to export $($yearDataToExport.Count) students for Year [$year] to '$YearLevelFilePath'..." -Level Debug
-
-                # Export to Excel with enhanced professional formatting
-                $excelParams = @{
-                    Path = $YearLevelFilePath
-                    InputObject = $yearDataToExport
-                    WorksheetName = "Year $year Students"
-                    FreezeTopRow = $true
-                    AutoFilter = $true
-                    AutoSize = $true
-                    BoldTopRow = $true
-                    TableStyle = "Medium6"  # Professional blue table style
-                    TableName = "StudentsYear$year"
-                    PassThru = $true
-                }
-                
-                $excel = Export-Excel @excelParams
-                
-                # Additional formatting for the worksheet
-                $worksheet = $excel.Workbook.Worksheets["Year $year Students"]
-                
-                
-                # Format data rows with alternating colors
-                if ($yearDataToExport.Count -gt 0) {
-                    $dataRange = $worksheet.Cells["A2:G$($yearDataToExport.Count + 3)"]  # Adjust based on actual data
-                    $dataRange.Style.Border.Top.Style = "Thin"
-                    $dataRange.Style.Border.Bottom.Style = "Thin"
-                    $dataRange.Style.Border.Left.Style = "Thin"
-                    $dataRange.Style.Border.Right.Style = "Thin"
-                    
-                    # Add alternating row colors
-                    for ($i = 4; $i -le ($yearDataToExport.Count + 3); $i += 2) {
-                        $rowRange = $worksheet.Cells["A$i`:G$i"]
-                        $rowRange.Style.Fill.PatternType = "Solid"
-                        $rowRange.Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::FromArgb(242, 245, 250))  # Light blue
-                    }
-                }
-                
-                # Format specific columns
-                # Username column - make it stand out
-                $usernameColumn = $worksheet.Cells["A2:A$($yearDataToExport.Count)"]
-                $usernameColumn.Style.Font.Bold = $true
-                
-                # Add a note about password security
-                $noteCell = $worksheet.Cells["A$($yearDataToExport.Count + 5)"]
-                $noteCell.Value = "⚠️ IMPORTANT: Passwords are sensitive information. Handle with care and follow school security policies."
-                $noteCell.Style.Font.Italic = $true
-                $noteCell.Style.Font.Color.SetColor([System.Drawing.Color]::FromArgb(156, 87, 0))
-                
-                # Add generation timestamp
-                $timestampCell = $worksheet.Cells["A$($yearDataToExport.Count + 6)"]
-                $timestampCell.Value = "Generated: $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss') by Student Account Automation Generator."
-                $timestampCell.Style.Font.Size = 9
-                $timestampCell.Style.Font.Italic = $true
-                $timestampCell.Style.Font.Color.SetColor([System.Drawing.Color]::Gray)
-                
-                # Save the workbook with formatting
-                $excel.Save()
-                $excel.Dispose()
-
-                Write-Log -Message "  Saved $($StudentsInYear.Count) students for Year [$year] to Excel: $YearLevelFilePath" -Level Information
-                $Global:ProcessingSummary.AppendLine("   - Year $($year): $($StudentsInYear.Count) students saved to Excel file $YearLevelFilePath") | Out-Null
-            } catch {
-                Write-Log -Message "  ERROR saving year Excel file for [$year] to [$YearLevelFilePath]: $($_.Exception.Message)" -Level Error
-                $Global:ProcessingSummary.AppendLine("   - Year $($year): ERROR saving Excel file - $($_.Exception.Message)") | Out-Null
+            Write-Log -Message "Processing Year $year..." -Level Information
+            $yearLevelsProcessed += "Year $year"
+            
+            # Create year level directory
+            $yearDirName = "Year_$($year -replace '[^a-zA-Z0-9_-]', '_')"
+            $yearDirPath = Join-Path -Path $StudentsByYearLevelDir -ChildPath $yearDirName
+            
+            if (-not (Test-Path -Path $yearDirPath -PathType Container)) {
+                New-Item -ItemType Directory -Path $yearDirPath -Force | Out-Null
+                Write-Log -Message "Created directory: $yearDirPath" -Level Verbose
             }
+            
+            # Group students by class within this year level
+            $StudentsInYear = $yearGroup.Group
+            $GroupedByClass = $StudentsInYear | Group-Object -Property Class
+            $classesInYear = 0
+            $studentsInYear = 0
+            
+            foreach ($classGroup in $GroupedByClass) {
+                $className = $classGroup.Name
+                if (-not [string]::IsNullOrWhiteSpace($className)) {
+                    try {
+                        Write-Log -Message "  Processing Class $className..." -Level Verbose
+                        
+                        # Sort students alphabetically by FirstName
+                        $studentsInClass = $classGroup.Group | Sort-Object FirstName
+                        
+                        # Generate PDF filename - sanitize class name for file system
+                        $sanitizedClassName = $className -replace '[^a-zA-Z0-9_-]', '_'
+                        $pdfFileName = "$yearDirName`_Class_$sanitizedClassName.pdf"
+                        $pdfFilePath = Join-Path -Path $yearDirPath -ChildPath $pdfFileName
+                        
+                        # Generate PDF content
+                        $success = Generate-StudentListPDF -Students $studentsInClass -OutputPath $pdfFilePath -YearLevel $year -ClassName $className
+                        
+                        if ($success) {
+                            Write-Log -Message "    Saved $($studentsInClass.Count) students for Year $year, Class $className to PDF: $pdfFilePath" -Level Verbose
+                            $totalPDFsGenerated++
+                            $classesInYear++
+                            $studentsInYear += $studentsInClass.Count
+                            $totalStudentsProcessed += $studentsInClass.Count
+                        } else {
+                            Write-Log -Message "    ERROR: Failed to generate PDF for Year $year, Class $className" -Level Error
+                            $errorCount++
+                        }
+                        
+                    } catch {
+                        Write-Log -Message "    ERROR processing Class $className in Year $year`: $($_.Exception.Message)" -Level Error
+                        $errorCount++
+                    }
+                } else {
+                    $studentsWithNoClass = $classGroup.Group.Count
+                    Write-Log -Message "  Skipping $studentsWithNoClass students in Year $year with blank/null Class." -Level Warning
+                }
+            }
+            
+            # Add year-level summary to processing summary
+            if ($classesInYear -gt 0) {
+                $Global:ProcessingSummary.AppendLine("   - Year $year`: $classesInYear classes, $studentsInYear students") | Out-Null
+            }
+            
         } else {
-            $studentsWithNoYear = $group.Group.Count
+            $studentsWithNoYear = $yearGroup.Group.Count
             Write-Log -Message "Skipping $studentsWithNoYear students with blank/null YearLevel." -Level Warning
-            $Global:ProcessingSummary.AppendLine("   WARNING: Skipped $studentsWithNoYear students with blank/null YearLevel.") | Out-Null
         }
+    }
+    
+    # Add overall summary
+    if ($totalPDFsGenerated -gt 0) {
+        $Global:ProcessingSummary.AppendLine("   SUCCESS: Generated $totalPDFsGenerated class list PDFs for $totalStudentsProcessed students") | Out-Null
+        if ($yearLevelsProcessed.Count -gt 0) {
+            $Global:ProcessingSummary.AppendLine("   Year levels updated: $($yearLevelsProcessed -join ', ')") | Out-Null
+        }
+    }
+    
+    if ($errorCount -gt 0) {
+        $Global:ProcessingSummary.AppendLine("   WARNING: $errorCount PDF generation errors occurred") | Out-Null
     }
 }
 
 $ScriptSuccess = $true 
 try {
+    Write-Heartbeat "Starting main processing logic"
+    
     $ActualDownloadedFilePath = Get-StudentDataDownload
     $StudentData = Get-StudentDataLists -DownloadedFilePath $ActualDownloadedFilePath
     $ProcessingResult = Compare-StudentChanges -DownloadedStudents $StudentData.DownloadedStudents -MasterStudents $StudentData.MasterStudents
@@ -678,9 +684,8 @@ try {
     # Debug: Check variable types and values before function call
     Write-Log -Message "DEBUG: About to call Update-MasterStudentData" -Level Information
     Write-Log -Message "DEBUG: ExistingStudentsToProcess is null: $($null -eq $ExistingStudentsToProcess)" -Level Information
-    Write-Log -Message "DEBUG: ExistingStudentsToProcess type: $($ExistingStudentsToProcess.GetType().Name)" -Level Information
     Write-Log -Message "DEBUG: ProcessedNewStudentsToUse is null: $($null -eq $ProcessedNewStudentsToUse)" -Level Information
-    Write-Log -Message "DEBUG: ProcessedNewStudentsToUse type: $($ProcessedNewStudentsToUse.GetType().Name)" -Level Information
+    Write-Log -Message "DEBUG: Forcing arrays before function call" -Level Information
     
     # Ensure arrays are properly initialized
     if ($null -eq $ExistingStudentsToProcess) { $ExistingStudentsToProcess = @() }
@@ -694,39 +699,68 @@ try {
     
     Write-Log -Message "DEBUG: Calling Update-MasterStudentData with splatting" -Level Information
     $FinalMasterList = Update-MasterStudentData @updateParams
+    
+    Write-Heartbeat "Starting PDF generation"
     Split-DataByYearLevel -MasterListToSplit $FinalMasterList
     
     Write-Log -Message "Daily student processing completed successfully." -Level Information
     $Global:ProcessingSummary.AppendLine("----------------------------------------------------") | Out-Null
     $Global:ProcessingSummary.AppendLine("Overall Status: SUCCESS") | Out-Null
+    
+    Write-Heartbeat "Main processing completed successfully"
 }
 catch {
     $ScriptSuccess = $false
-    $ErrorMessage = "AN ERROR OCCURRED: $($_.Exception.Message)"
-    $ErrorDetails = "Stack Trace: $($_.ScriptStackTrace) - Position: $($_.InvocationInfo.PositionMessage)" # Ensure this captures useful info
+    $ErrorMessage = "Critical error during processing: $($_.Exception.Message)"
+    $ErrorDetails = 
+@"
+Error Type: $($_.Exception.GetType().Name)
+Error Message: $($_.Exception.Message)
+Script Stack Trace: $($_.ScriptStackTrace)
+Position: $($_.InvocationInfo.PositionMessage)
+Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+"@
+    
     Write-Log -Message $ErrorMessage -Level Error
-    Write-Log -Message $ErrorDetails -Level Error # Log details to file
+    Write-Log -Message $ErrorDetails -Level Error
+    Write-Heartbeat "CRITICAL ERROR: $ErrorMessage"
     
     $Global:ProcessingSummary.AppendLine("----------------------------------------------------") | Out-Null
     $Global:ProcessingSummary.AppendLine("Overall Status: FAILED") | Out-Null
     $Global:ProcessingSummary.AppendLine("ERROR: $ErrorMessage") | Out-Null
-    # $Global:ProcessingSummary.AppendLine("DETAILS: $ErrorDetails") | Out-Null # Optionally add full details to summary email
 
-    # Send Admin Error Notification
-    Send-NotificationEmail -NotificationType "AdminError" -IsScriptSuccessful $false -CustomMessage $ErrorMessage -CustomDetails $ErrorDetails
+    # Send immediate admin error notification
+    try {
+        Send-NotificationEmail -NotificationType "AdminError" -IsScriptSuccessful $false -CustomMessage $ErrorMessage -CustomDetails $ErrorDetails
+    } catch {
+        Write-Log -Message "CRITICAL: Failed to send error notification email: $($_.Exception.Message)" -Level Error
+        Write-Heartbeat "Failed to send error notification email"
+    }
 }
 finally {
+    Write-Heartbeat "Starting cleanup and finalization"
+    
+    # Restore original verbose preference if it was modified
     if ($null -ne $script:OriginalVerbosePreference) {
         $VerbosePreference = $script:OriginalVerbosePreference
         Write-Log -Message "Restored original VerbosePreference value ('$($VerbosePreference)')." -Level Debug
     }
 
-    #Perform File Cleanup
-    Invoke-FileCleanUp
+    # Perform file cleanup
+    try {
+        Invoke-FileCleanUp
+    } catch {
+        Write-Log -Message "Warning: File cleanup failed: $($_.Exception.Message)" -Level Warning
+    }
 
-    # Send Process Summary Notification (success or failure, respecting SendOnSuccessOnly)
-    Send-NotificationEmail -NotificationType "ProcessSummary" -IsScriptSuccessful $ScriptSuccess
+    # Send process summary notification (only if script was successful and there are changes worth reporting)
+    try {
+        Send-NotificationEmail -NotificationType "ProcessSummary" -IsScriptSuccessful $ScriptSuccess
+    } catch {
+        Write-Log -Message "Warning: Failed to send process summary email: $($_.Exception.Message)" -Level Warning
+    }
     
+    # Cleanup eduSTAR connection
     Write-Log -Message "Performing cleanup..." -Level Verbose
     if (Get-Command Disconnect-eduSTARMC -ErrorAction SilentlyContinue) {
         try { 
@@ -737,17 +771,22 @@ finally {
                 Write-Log -Message "Disconnected from eduSTAR MC." -Level Verbose 
             }
         }
-        catch { Write-Log -Message "Error during Disconnect-eduSTARMC: $($_.Exception.Message)" -Level Warning }
+        catch { 
+            Write-Log -Message "Warning: Error during Disconnect-eduSTARMC: $($_.Exception.Message)" -Level Warning 
+        }
     }
+    
+    # Final timing and summary
     $ScriptEndTime = Get-Date
     $ScriptDuration = New-TimeSpan -Start $ScriptStartTime -End $ScriptEndTime
-    Write-Log -Message "Script execution finished. Total duration: $($ScriptDuration.TotalSeconds) seconds." -Level Information
-    $Global:ProcessingSummary.AppendLine("Script Duration: $($ScriptDuration.TotalSeconds) seconds.") | Out-Null
+    Write-Log -Message "Script execution finished. Total duration: $($ScriptDuration.TotalMinutes.ToString('F2')) minutes." -Level Information
+    $Global:ProcessingSummary.AppendLine("Script Duration: $($ScriptDuration.TotalMinutes.ToString('F2')) minutes.") | Out-Null
     
-    # Log the full summary if email wasn't sent or enabled
-    $emailConfig = $Global:Config.EmailNotification
-    if (-not $emailConfig.Enabled -or ($emailConfig.Enabled -and (-not $ScriptSuccess -and $emailConfig.SendOnSuccessOnly))) {
-         Write-Log -Message "Final Processing Summary (also for log):`n$($Global:ProcessingSummary.ToString())" -Level Information -NoTimestamp
-    }
+    Write-Heartbeat "Script completed with status: $(if ($ScriptSuccess) { 'SUCCESS' } else { 'FAILED' })"
+    
+    # Always log the full summary for administrative reference
+    Write-Log -Message "=== FINAL PROCESSING SUMMARY ===" -Level Information
+    Write-Log -Message $Global:ProcessingSummary.ToString() -Level Information -NoTimestamp
+    Write-Log -Message "=== END SUMMARY ===" -Level Information
 }  
 #endregion Main Processing Logic
