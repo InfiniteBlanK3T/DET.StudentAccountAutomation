@@ -7,11 +7,12 @@
 Before starting, ensure you have:
 
 - [ ] Windows Server 2012 R2+ or Windows 10+
-- [ ] PowerShell 5.1 or later
+- [ ] [PowerShell 7](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.5)
 - [ ] Administrator access to the target computer
 - [ ] Network access to apps.edustar.vic.edu.au
 - [ ] Valid eduSTAR Management Console credentials
 - [ ] SMTP server details for email notifications
+- [ ] [WKHTMLTOPDF - Make files in PDF Format](https://wkhtmltopdf.org/)
 
 ### Step 1: File Setup
 
@@ -26,7 +27,7 @@ Before starting, ensure you have:
    │   ├── *.psm1 (PowerShell modules)
    │   ├── config.json.template
    │   └── Logs/ (will be created)
-   ├── Archived-Logs/
+   ├── Archived/
    │   ├── DailyDownloads/ (will be created)
    │   └── ArchivedCurrentData/ (will be created)
    └── StudentsByYearLevel/ (will be created)
@@ -42,6 +43,10 @@ Install-Module ImportExcel -Scope AllUsers -Force
 
 # Verify installation
 Get-Module ImportExcel -ListAvailable
+```
+
+```powershell
+wkhtmltopdf --version
 ```
 
 ### Step 3: Create Configuration File
@@ -349,7 +354,7 @@ try {
 Ensure the following permissions are set:
 
 - **Scripts directory:** Read/Write for service account, Read for administrators
-- **Archived-Logs directory:** Read/Write for service account
+- **Archived directory:** Read/Write for service account
 - **C:\Credentials directory:** Full control for service account only
 
 ### Network Security

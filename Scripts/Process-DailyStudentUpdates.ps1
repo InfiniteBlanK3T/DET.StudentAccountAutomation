@@ -1,4 +1,3 @@
-# Version 1.7.0
 # Purpose: Automate daily updates to student accounts, configurable via an external JSON file.
 #          Supports new directory structure for scripts and data.
 #          Refactored email notification system.
@@ -19,20 +18,20 @@
             config.json
             Logs/
                 DailyStudentProcessLog_YYYYMMDD.log
-        Archived-Logs/     (All student data files and subdirectories)
+        Archived/     (All student data files and subdirectories)
             MasterStudentData.csv (Or as named in config)
             ArchivedCurrentData/
             DailyDownloads/
         StudentsByYearLevel/
             Year_00/
-                Year_00_Class_0A.pdf
-                Year_00_Class_0B.pdf
+                Class_0A.pdf
+                Class_0B.pdf
             Year_01/
-                Year_01_Class_1A.pdf
-                Year_01_Class_1B.pdf
+                Class_1A.pdf
+                Class_1B.pdf
             Year_02/
-                Year_02_Class_2H.pdf
-                Year_02_Class_2L.pdf
+                Class_2H.pdf
+                Class_2L.pdf
 
     Actions:
     1. Loads configuration from 'Scripts/config.json'.
@@ -94,7 +93,7 @@ $VerbosePreference = "Continue"
 # --- Base Path Assumptions ---
 $ScriptsDir = $PSScriptRoot 
 $ProjectRoot = (Get-Item $ScriptsDir).Parent.FullName
-$DataDir = Join-Path -Path $ProjectRoot -ChildPath "Archived-Logs"
+$DataDir = Join-Path -Path $ProjectRoot -ChildPath "Archived"
 
 # --- Load Configuration (from Scripts folder) ---
 $ConfigPath = Join-Path -Path $ScriptsDir -ChildPath "config.json" # config.json is with the script
@@ -607,7 +606,7 @@ Function Split-DataByYearLevel {
                         
                         # Generate PDF filename - sanitize class name for file system
                         $sanitizedClassName = $className -replace '[^a-zA-Z0-9_-]', '_'
-                        $pdfFileName = "$yearDirName`_Class_$sanitizedClassName.pdf"
+                        $pdfFileName = "Class_$sanitizedClassName.pdf"
                         $pdfFilePath = Join-Path -Path $yearDirPath -ChildPath $pdfFileName
                         
                         # Generate PDF content

@@ -168,7 +168,7 @@ DET.StudentAccountAutomation/
 │   ├── *.psm1                            # PowerShell modules
 │   ├── config.json                       # Configuration file
 │   └── Logs/                             # Daily log files
-├── Archived-Logs/                    # Data storage
+├── Archived/                    # Data storage
 │   ├── MasterStudentData.csv             # Primary student database
 │   ├── DailyDownloads/                   # API download files
 │   └── ArchivedCurrentData/              # Historical backups
@@ -265,7 +265,7 @@ Get-Content $LogFile | Where-Object { $_ -like "*[Error]*" } | Measure-Object | 
 
 - **Configuration:** `Scripts\config.json`
 - **Today's Log:** `Scripts\Logs\DailyStudentProcessLog_YYYYMMDD.log`
-- **Student Data:** `Archived-Logs\MasterStudentData.csv`
+- **Student Data:** `Archived\MasterStudentData.csv`
 - **Class Reports:** `StudentsByYearLevel\Year_XX\`
 
 This documentation index should serve as your starting point for any information needs related to the DET Student Account Automation system. Each document is designed to stand alone while also working together as a comprehensive reference suite.

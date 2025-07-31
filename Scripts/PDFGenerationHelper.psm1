@@ -362,7 +362,7 @@ function Generate-StudentListHTML {
     <div class="footer" style="margin-top: 15px; padding-top: 10px;">
         <p><strong>$($Global:Config.SchoolSettings.SchoolName)</strong> (School #$($Global:Config.SchoolSettings.SchoolNumber)) | Class: Year $YearLevel - $ClassName</p>
         <p>Student Account System | Generated: $(Get-Date -Format 'dd/MM/yyyy') | Total Students: $($Students.Count)</p>
-        <p style="font-size: 9pt; color: #777;">For support, contact: Thomas.Vo3@education.vic.gov.au or your school's IT administrator</p>
+        <p style="font-size: 9pt; color: #777;">For support, contact your school's IT administrator. <a href="$($Global:Config.SchoolSettings.HelpDeskWebPortal)">HelpDesk Portal</a></p>
     </div>
 </body>
 </html>

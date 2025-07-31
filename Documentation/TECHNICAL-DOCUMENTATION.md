@@ -21,7 +21,7 @@ The DET Student Account Automation system is built as a modular PowerShell appli
 
 ### Version Information
 
-- **Current Version:** 1.6
+- **Current Version:** 0.9.1
 - **Author:** Thomas VO (ST02392) - Thomas.Vo3@education.vic.gov.au
 - **Platform:** Windows PowerShell 5.1+ / PowerShell Core 7+
 - **Dependencies:** ImportExcel module, System.Net.Http
@@ -55,7 +55,7 @@ DET.StudentAccountAutomation/
 │   ├── *.psm1                 # PowerShell modules
 │   ├── config.json            # Runtime configuration
 │   └── Logs/                  # Application logs
-├── Archived-Logs/             # Data storage
+├── Archived/             # Data storage
 │   ├── MasterStudentData.csv  # Primary student database
 │   ├── DailyDownloads/        # Daily API downloads
 │   └── ArchivedCurrentData/   # Historical backups

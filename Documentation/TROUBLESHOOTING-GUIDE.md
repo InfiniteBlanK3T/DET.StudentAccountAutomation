@@ -38,7 +38,7 @@
 3. **Files Being Updated**
 
    ```
-   Check: Archived-Logs\MasterStudentData.csv
+   Check: Archived\MasterStudentData.csv
    Should have recent modification time
    ```
 
@@ -103,7 +103,7 @@ Verify in Task Scheduler:
 ```
 Check that the scheduled task user account has:
 - Read/Write access to Scripts directory
-- Read/Write access to Archived-Logs directory
+- Read/Write access to Archived directory
 - Access to C:\Credentials directory
 ```
 
@@ -539,7 +539,7 @@ Write-Host $EmailBody
 
 ```
 ❌ Access denied writing to Scripts\Logs\
-❌ Cannot create Archived-Logs\MasterStudentData.csv
+❌ Cannot create Archived\MasterStudentData.csv
 ❌ Permission denied accessing C:\Credentials\
 ```
 
@@ -583,7 +583,7 @@ Set-Acl -Path $Path -AclObject $Acl
 
 ```powershell
 # Find processes using files
-$FilePath = "Archived-Logs\MasterStudentData.csv"
+$FilePath = "Archived\MasterStudentData.csv"
 $Processes = Get-Process | Where-Object { $_.Modules.FileName -like "*$FilePath*" }
 $Processes | Stop-Process -Force
 
@@ -613,7 +613,7 @@ $LogDir = "Scripts\Logs"
 $OldLogs = Get-ChildItem $LogDir | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) }
 $OldLogs | Remove-Item -Force
 
-$ArchiveDir = "Archived-Logs\ArchivedCurrentData"
+$ArchiveDir = "Archived\ArchivedCurrentData"
 $OldArchives = Get-ChildItem $ArchiveDir | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-90) }
 $OldArchives | Remove-Item -Force
 ```
@@ -809,7 +809,7 @@ if (Test-Path "config.json.template") {
 
 ```powershell
 # List available backups
-$ArchiveDir = "Archived-Logs\ArchivedCurrentData"
+$ArchiveDir = "Archived\ArchivedCurrentData"
 $Backups = Get-ChildItem $ArchiveDir -Filter "ArchivedMasterStudentData_*.csv" | Sort-Object LastWriteTime -Descending
 
 Write-Host "Available backups:"
@@ -818,7 +818,7 @@ $Backups | ForEach-Object { Write-Host "  $($_.Name) - $($_.LastWriteTime)" }
 # Restore from most recent backup
 if ($Backups.Count -gt 0) {
     $LatestBackup = $Backups[0]
-    Copy-Item $LatestBackup.FullName "Archived-Logs\MasterStudentData.csv"
+    Copy-Item $LatestBackup.FullName "Archived\MasterStudentData.csv"
     Write-Host "✅ Master data restored from: $($LatestBackup.Name)"
 }
 ```
@@ -843,9 +843,9 @@ Copy-Item "config.json.template" "config.json"
 Remove-Item "C:\Credentials\eduSTARMCAdministration\Creds.xml" -Force -ErrorAction SilentlyContinue
 
 # 4. Restore data from backup
-$LatestBackup = Get-ChildItem "Archived-Logs\ArchivedCurrentData" -Filter "*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$LatestBackup = Get-ChildItem "Archived\ArchivedCurrentData" -Filter "*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($LatestBackup) {
-    Copy-Item $LatestBackup.FullName "Archived-Logs\MasterStudentData.csv"
+    Copy-Item $LatestBackup.FullName "Archived\MasterStudentData.csv"
 }
 
 Write-Host "✅ Emergency recovery completed"
@@ -986,7 +986,7 @@ if (Test-Path $LogFile) { "✅ Log exists" } else { "❌ No log today" }
 Get-Content $LogFile | Where-Object { $_ -like "*[Error]*" } | Measure-Object | Select-Object -ExpandProperty Count
 
 # Check master data age
-$MasterFile = "Archived-Logs\MasterStudentData.csv"
+$MasterFile = "Archived\MasterStudentData.csv"
 if (Test-Path $MasterFile) {
     $Age = (Get-Date) - (Get-Item $MasterFile).LastWriteTime
     "Master data age: $($Age.Days) days"

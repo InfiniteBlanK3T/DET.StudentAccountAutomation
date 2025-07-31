@@ -53,7 +53,7 @@ DET.StudentAccountAutomation/
 │   ├── config.json            ← Main configuration file (YOU EDIT THIS)
 │   ├── config.json.template   ← Template to help you set up config.json
 │   └── Logs/                  ← Daily log files appear here
-├── Archived-Logs/             ← Student data files stored here
+├── Archived/             ← Student data files stored here
 │   ├── MasterStudentData.csv  ← Main student database
 │   ├── DailyDownloads/        ← Daily downloads from eduSTAR
 │   └── ArchivedCurrentData/   ← Backup copies of student data
@@ -271,7 +271,7 @@ Once testing is successful, set up Windows Task Scheduler:
 
 **Check These:**
 
-- ✅ Does `MasterStudentData.csv` exist in the Archived-Logs folder?
+- ✅ Does `MasterStudentData.csv` exist in the Archived folder?
 - ✅ Can the script connect to eduSTAR (check log for authentication errors)?
 - ✅ Are the file permissions correct for the service account?
 
