@@ -12,16 +12,24 @@
     This script performs daily student account updates.
     Expected Directory Structure:
     /StudentAccountAutomation/
-        Scripts/  (This script, StudentDataUtils.psm1, config.json, Logs/)
-            Process-DailyStudentUpdates.ps1
-            StudentDataUtils.psm1
-            config.json
-            Logs/
-                DailyStudentProcessLog_YYYYMMDD.log
-        Archived/     (All student data files and subdirectories)
-            MasterStudentData.csv (Or as named in config)
-            ArchivedCurrentData/
-            DailyDownloads/
+        src/
+            Scripts/  (This script, helper modules, config.json, Logs/)
+                config.json
+                config.json.template
+                EduSTARHelper.psm1
+                EmailNotificationHelper.psm1
+                MiscHelper.psm1
+                PDFGenerationHelper.psm1
+                Process-DailyStudentUpdates.ps1
+                StudentDataHelper.psm1
+                TEST-DoNotUse.csv
+                UtilityHelper.psm1
+                Logs/
+                    DailyStudentProcessLog_YYYYMMDD.log
+            Archived/     (All student data files and subdirectories)
+                MasterStudentData.csv (Or as named in config)
+                ArchivedCurrentData/
+                DailyDownloads/
         StudentsByYearLevel/
             Year_00/
                 Class_0A.pdf
@@ -92,8 +100,9 @@ $VerbosePreference = "Continue"
 
 # --- Base Path Assumptions ---
 $ScriptsDir = $PSScriptRoot 
-$ProjectRoot = (Get-Item $ScriptsDir).Parent.FullName
-$DataDir = Join-Path -Path $ProjectRoot -ChildPath "Archived"
+$SrcDir = (Get-Item $ScriptsDir).Parent.FullName
+$ProjectRoot = (Get-Item $SrcDir).Parent.FullName
+$DataDir = Join-Path -Path $SrcDir -ChildPath "Archived"
 
 # --- Load Configuration (from Scripts folder) ---
 $ConfigPath = Join-Path -Path $ScriptsDir -ChildPath "config.json" # config.json is with the script
@@ -168,6 +177,7 @@ $Global:ProcessingSummary.AppendLine("Student Data Processing Report for $(Get-D
 $Global:ProcessingSummary.AppendLine("School: $($Global:Config.SchoolSettings.SchoolName) (Number: $($Global:Config.SchoolSettings.SchoolNumber))") | Out-Null
 $Global:ProcessingSummary.AppendLine("----------------------------------------------------") | Out-Null
 Write-Log -Message "Project Root: $ProjectRoot" -Level Verbose
+Write-Log -Message "Src Directory: $SrcDir" -Level Verbose
 Write-Log -Message "Scripts Directory: $ScriptsDir" -Level Verbose
 Write-Log -Message "Data Directory: $DataDir" -Level Verbose
 Write-Log -Message "Configuration loaded from: $ConfigPath" -Level Verbose
@@ -563,8 +573,6 @@ Function Split-DataByYearLevel {
         return
     }
 
-    $RequiredHeaders = @("Username","FirstName","LastName","YearLevel","Class","Email","Password") 
-    
     # Initialize counters for summary
     $totalPDFsGenerated = 0
     $totalStudentsProcessed = 0

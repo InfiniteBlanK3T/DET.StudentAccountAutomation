@@ -72,4 +72,4 @@ Export-ModuleMember -Function `
     Invoke-FileCleanUp, `
     Get-UserFriendlySummary
 
-Write-Log "[Utils] MiscHelper.psm1 v1.7.1 loaded with modular architecture."
+Write-Log "[Utils] MiscHelper.psm1 $($Global:Config.ScriptBehavior.ScriptVersion) loaded with modular architecture."
